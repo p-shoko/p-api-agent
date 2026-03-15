@@ -1,6 +1,6 @@
 {
   "name": "p-api-agent",
-  "version": "0.0.4",
+  "version": "0.0.7",
   "main": "./dist/index.cjs",
   "module": "./dist/index.mjs",
   "files": [
@@ -18,7 +18,23 @@
   },
   "author": "",
   "license": "ISC",
-  "description": "",
+  "description": "一个轻量、高效、模型无关的 LLM Agent 框架，采用 ReAct 单调用循环架构",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/p-shoko/p-api-agent.git"
+  },
+  "homepage": "https://github.com/p-shoko/p-api-agent#readme",
+  "bugs": {
+    "url": "https://github.com/p-shoko/p-api-agent/issues"
+  },
+  "keywords": [
+    "agent",
+    "llm",
+    "react",
+    "function-call",
+    "openai",
+    "ai"
+  ],
   "devDependencies": {
     "@types/lodash": "4.17.16",
     "@types/node": "^25.3.5",

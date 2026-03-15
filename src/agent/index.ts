@@ -256,17 +256,163 @@ export class Agent {
     }
 
     private parse_command(raw: string): AgentCommand | null {
-        const json = this.safe_extract_json(raw)
-        if (!json || typeof json.command !== 'string') return null
-        return json as AgentCommand
+        const normalized = this.normalize_llm_output(raw)
+        const json = this.safe_extract_json(normalized)
+        if (!json) return null
+
+        if (typeof json.command === 'string') {
+            return json as AgentCommand
+        }
+
+        return this.adapt_common_tool_call(json)
     }
 
     private safe_extract_json(content: string): any | null {
         try {
             return LLM_Utils.extract_json(content)
         } catch {
-            return null
+            const json_candidate = this.find_first_json_block(content)
+            if (!json_candidate) return null
+            try {
+                return LLM_Utils.parse_json(json_candidate)
+            } catch {
+                return null
+            }
         }
+    }
+
+    /**
+     * 兼容部分模型返回的函数调用包裹标记，例如：
+     * <|FunctionCallBegin|> ... <|FunctionCallEnd|>
+     */
+    private normalize_llm_output(raw: string): string {
+        return raw
+            .replace(/<\|FunctionCallBegin\|>/gi, '')
+            .replace(/<\|FunctionCallEnd\|>/gi, '')
+            .replace(/<\|tool_call\|>/gi, '')
+            .replace(/<tool_call>/gi, '')
+            .replace(/<\/tool_call>/gi, '')
+            .trim()
+    }
+
+    /** 从混杂文本中提取第一个 JSON 对象字符串 */
+    private find_first_json_block(content: string): string | null {
+        const fenced = content.match(/```json\s*([\s\S]*?)\s*```/i)
+        if (fenced?.[1]) return fenced[1]
+
+        const objectStart = content.indexOf('{')
+        const arrayStart = content.indexOf('[')
+
+        let start = -1
+        let openChar = '{'
+        let closeChar = '}'
+
+        if (objectStart >= 0 && (arrayStart < 0 || objectStart < arrayStart)) {
+            start = objectStart
+            openChar = '{'
+            closeChar = '}'
+        } else if (arrayStart >= 0) {
+            start = arrayStart
+            openChar = '['
+            closeChar = ']'
+        }
+
+        if (start < 0) return null
+
+        let depth = 0
+        let inString = false
+        let escaped = false
+
+        for (let i = start; i < content.length; i++) {
+            const ch = content[i]
+
+            if (inString) {
+                if (escaped) {
+                    escaped = false
+                    continue
+                }
+                if (ch === '\\') {
+                    escaped = true
+                    continue
+                }
+                if (ch === '"') {
+                    inString = false
+                }
+                continue
+            }
+
+            if (ch === '"') {
+                inString = true
+                continue
+            }
+
+            if (ch === openChar) depth++
+            if (ch === closeChar) {
+                depth--
+                if (depth === 0) {
+                    return content.slice(start, i + 1)
+                }
+            }
+        }
+        return null
+    }
+
+    /** 兼容常见 Function Calling 输出结构并转换为内部指令 */
+    private adapt_common_tool_call(json: any): AgentCommand | null {
+        // 结构0：数组包裹 [{ name, arguments }] / [{ function: { ... } }]
+        if (Array.isArray(json) && json.length > 0) {
+            return this.adapt_common_tool_call(json[0])
+        }
+
+        // 结构1：{ name, arguments }
+        if (typeof json?.name === 'string') {
+            const params = this.normalize_params(json.params ?? json.arguments ?? json.parameters ?? {})
+            return {
+                command: 'use_tool',
+                tool_name: json.name,
+                params,
+                reasoning: typeof json.reasoning === 'string' ? json.reasoning : undefined
+            }
+        }
+
+        // 结构2：{ function: { name, arguments } }
+        if (typeof json?.function?.name === 'string') {
+            const params = this.normalize_params(json.function.arguments ?? json.function.parameters ?? {})
+            return {
+                command: 'use_tool',
+                tool_name: json.function.name,
+                params,
+                reasoning: typeof json.reasoning === 'string' ? json.reasoning : undefined
+            }
+        }
+
+        // 结构3：{ tool_calls: [{ function: { name, arguments } }] }
+        const first_tool_call = Array.isArray(json?.tool_calls) ? json.tool_calls[0] : null
+        if (typeof first_tool_call?.function?.name === 'string') {
+            const params = this.normalize_params(first_tool_call.function.arguments ?? first_tool_call.function.parameters ?? {})
+            return {
+                command: 'use_tool',
+                tool_name: first_tool_call.function.name,
+                params,
+                reasoning: typeof json.reasoning === 'string' ? json.reasoning : undefined
+            }
+        }
+
+        return null
+    }
+
+    private normalize_params(params: any): Record<string, any> {
+        if (params == null) return {}
+        if (typeof params === 'string') {
+            try {
+                const parsed = LLM_Utils.parse_json(params)
+                return typeof parsed === 'object' && parsed ? parsed : { value: parsed }
+            } catch {
+                return { value: params }
+            }
+        }
+        if (typeof params === 'object') return params
+        return { value: params }
     }
 
     private async call_llm_with_retry(input: UserChatInput): Promise<string> {
