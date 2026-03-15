@@ -1,0 +1,15 @@
+{
+    "compilerOptions": {
+        "noImplicitAny": false,
+        "declaration": true, // ← 生成 .d.ts 类型声明文件
+        "outDir": "dist", // ← 输出目录
+        "moduleResolution": "Node",
+        "lib": ["ESNext", "DOM"], 
+        "esModuleInterop": true,
+        "downlevelIteration": true,
+        "skipLibCheck": true
+    },
+    "include": [
+        "src"
+    ]
+}
